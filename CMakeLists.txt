@@ -5,22 +5,28 @@ project(FitApp VERSION 0.1 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Quick Charts Positioning Location)
+find_package(Qt6 6.5 REQUIRED COMPONENTS #[[Core]]#[[AndroidExtras]] Quick Charts Positioning Location)
+
+# set(ANDROID_PACKAGE_SOURCE_DIR ${PROJECT_SOURCE_DIR}/android CACHE INTERNAL "")
 
 # FIT library
-set(FIT_DIR ../FitSDKRelease_21.115.00/cpp)
+# set(FIT_DIR ../FitSDKRelease_21.115.00/cpp)
+set(FIT_DIR ../FitSDKRelease_21.133.00/cpp)
 include_directories(${FIT_DIR})
 
 # FIND BOOST
+set(BOOST_ROOT /home/x-ray/Android/Boost-for-Android/boost_1_84_0/)
+set(Boost_COMPILER "-clang")
 find_package(Boost)
 if (Boost_FOUND)
     if(Boost_VERSION_MINOR LESS 84)
         message(FATAL_ERROR "==> !! Required Boost version is greater than or equal to 1.84.0! Current ${Boost_VERSION}.")
     endif()
     include_directories(${Boost_INCLUDE_DIR})
-    message(==> "Boost ${Boost_VERSION} found!!!")
+    message(==> "Boost ${Boost_VERSION} found!!! ${Boost_INCLUDE_DIR}")
 else()
-    message(FATAL_ERROR "Boost not found!!!")
+    # message(FATAL_ERROR "Boost not found!!!")
+    include_directories(/home/x-ray/Android/Boost-for-Android/boost_1_84_0)
 endif()
 
 
@@ -32,7 +38,7 @@ qt_add_qml_module(appFitApp
     URI FitApp
     VERSION 1.0
     QML_FILES
-        Main.qml
+    Main.qml
 )
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
@@ -44,6 +50,8 @@ set_target_properties(appFitApp PROPERTIES
     MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
     MACOSX_BUNDLE TRUE
     WIN32_EXECUTABLE TRUE
+    QT_ANDROID_PACKAGE_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/android # Qt6
+
 )
 
 # FIT library
@@ -53,8 +61,10 @@ add_library(FIT_LIB ${FIT_SRC})
 
 target_link_libraries(appFitApp PRIVATE
     Qt6::Charts
-    Qt6::Positioning
+    Qt6::CorePrivate
+    # Qt6::Core
     Qt6::Location
+    Qt6::Positioning
     Qt6::Quick
     FIT_LIB
 )

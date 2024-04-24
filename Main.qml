@@ -88,7 +88,8 @@ ApplicationWindow {
             Layout.fillHeight: true
             Layout.fillWidth: true
             plugin: mapPlugin
-            center: QtPositioning.coordinate(56.858754, 35.917349) // Тверь
+            center: Model.route()[0]
+            //QtPositioning.coordinate(56.858754, 35.917349) // Тверь
             zoomLevel: 14
             property geoCoordinate startCentroid
 
@@ -145,50 +146,6 @@ ApplicationWindow {
                 line.color: 'green'
                 path: Model.route()
             }
-
-            // RouteQuery {
-            //     id: aQuery
-            //     waypoints: Model.route()
-            // }
-            // RouteModel {
-            //     id: routeModel
-            //     plugin: mapPlugin
-            //     query: aQuery
-            //     Component.onCompleted: {
-            //         var route = Model.route()
-            //         for (var i in Model.route())
-            //             query.addWaypoint(route[i])
-            //         // query.addWaypoint(QtPositioning.coordinate(-25.402340,
-            //         //                                            -49.248682))
-            //         // query.addWaypoint(QtPositioning.coordinate(-25.392142,
-            //         //                                            -49.202556))
-            //         // query.addWaypoint(QtPositioning.coordinate(-25.372512,
-            //         //                                            -49.227785))
-            //         // query.addWaypoint(QtPositioning.coordinate(-25.402340,
-            //         //                                            -49.248682))
-            //         routeModel.update()
-            //     }
-            // }
-            // MapItemView {
-            //     model: routeModel
-            //     delegate: MapRoute {
-            //         //routeDelegate
-            //         route: routeData1
-            //         line.color: "red"
-            //         line.width: 5
-            //         smooth: true
-            //     }
-            // }
-            // // Component {
-            // //     id: routeDelegate
-            // //     MapRoute {
-            // //         route: routeModel
-            // //         line.color: 'red'
-            // //         line.width: 5
-            // //         smooth: true
-            // //         opacity: 0.8
-            // //     }
-            // // }
         }
         Rectangle {
             Layout.fillHeight: true

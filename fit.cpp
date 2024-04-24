@@ -1,9 +1,12 @@
 #include "fit.h"
+#include "private/qjnihelpers_p.h"
 
 #include <QAbstractTableModel>
 #include <QDebug>
 #include <QElapsedTimer>
+#include <QQmlFile>
 #include <QTextStream>
+#include <QUrl>
 // #include <format>
 #include <any>
 #include <fstream>
@@ -19,6 +22,7 @@ namespace pfr = boost::pfr;
 #include "fit_mesg_broadcaster.hpp"
 
 const double k = (180. / pow(2, 31));
+constexpr double m_s_to_km_h = 3.6;
 
 struct Record {
     // Record() { }
@@ -73,23 +77,26 @@ QVariant Model::data(const QModelIndex& index, int role) const {
     if(role == Qt::DisplayRole || role == Qt::EditRole)
         return []<size_t... Is>(const Record& rec, int column, std::index_sequence<Is...>) -> QVariant {
             static QDateTime add{
-                QDate{1980, 1, 6},
+                QDate{1989, 12, 31},
                 QTime{}
             };
             switch(column) {
-            case __COUNTER__ /*0*/: return QString::number(rec.altitude);                                          // 0  native: 193.000000
-            case __COUNTER__ /*1*/: return QString::number(rec.cadence);                                           // 1  native: 57.000000
-            case __COUNTER__ /*2*/: return QString::number(rec.distance / 1000);                                   // 2  native: 415.990000
+                // clang-format off
+            case __COUNTER__ /*0*/:    return QString::number(rec.altitude); // 0  native: 193.000000
+            case __COUNTER__ /*1*/:    return QString::number(rec.cadence); // 1  native: 57.000000
+            case __COUNTER__ /*2*/:    return QString::number(rec.distance / 1000); // 2  native: 415.990000
             // case __COUNTER__ /*3*/: return QString::number(rec.enhanced_altitude);                                 // 3  native: 193.000000
             // case __COUNTER__ /*4*/: return QString::number(rec.enhanced_speed);                                    // 4  native: 6.250000
-            case __COUNTER__ /*5*/: return QString::number(rec.grade);                                             // 5  native: -0.300000
-            case __COUNTER__ /*6*/: return QString::number(rec.heart_rate);                                        // 6  native: 115.000000
-            case __COUNTER__ /*7*/: return QString::number(rec.position_lat * k);                                  // 7  native: 680525518.000000
-            case __COUNTER__ /*8*/: return QString::number(rec.position_long * k);                                 // 8  native: 417299976.000000
-            case __COUNTER__ /*9*/: return QString::number(rec.speed);                                             // 9  native: 6.250000
-            case __COUNTER__ /*10*/: return QString::number(rec.temperature);                                      // 10 native: 22.000000
-            case __COUNTER__ /*11*/: return QDateTime::fromSecsSinceEpoch(rec.timestamp + add.toSecsSinceEpoch()); // 11 native: 1060153274.000000
+            case __COUNTER__ /*5*/:    return QString::number(rec.grade); // 5  native: -0.300000
+            case __COUNTER__ /*6*/:    return QString::number(rec.heart_rate); // 6  native: 115.000000
+            case __COUNTER__ /*7*/:    return QString::number(rec.position_lat * k); // 7  native: 680525518.000000
+            case __COUNTER__ /*8*/:    return QString::number(rec.position_long * k); // 8  native: 417299976.000000
+            case __COUNTER__ /*9*/:    return QString::number(rec.speed * m_s_to_km_h); // 9  native: 6.250000
+            case __COUNTER__ /*10*/:   return QString::number(rec.temperature); // 10 native: 22.000000
+            case __COUNTER__ /*11*/:   return QDateTime::fromSecsSinceEpoch(rec.timestamp + add.toSecsSinceEpoch()); // 11 native: 1060153274.000000
+                // clang-format on
             }
+            return {};
             // if(column == pfr::tuple_size_v<Record> - 1) {
             //     QDateTime add{
             //         QDate{1980, 1, 6},
@@ -126,7 +133,8 @@ QList<QGeoCoordinate> Model::route() const {
     ret.reserve(Records.size());
     for(auto&& rec: Records) {
         QGeoCoordinate geo{rec.position_lat * k, rec.position_long * k, rec.altitude};
-        if(rec.position_lat && rec.position_long && geo.isValid()) ret.push_back(geo);
+        if(rec.position_lat && rec.position_long && geo.isValid())
+            ret.push_back(geo);
     }
     return ret;
 }
@@ -139,17 +147,15 @@ void printf_(Ts&&... vals) {
     ts << data;
 }
 
-class Listener final
-    : public fit::FileIdMesgListener,
-      public fit::UserProfileMesgListener,
-      public fit::MonitoringMesgListener,
-      public fit::DeviceInfoMesgListener,
-      public fit::MesgListener,
-      public fit::DeveloperFieldDescriptionListener,
-      public fit::RecordMesgListener {
+class Listener final : public fit::FileIdMesgListener,
+                       public fit::UserProfileMesgListener,
+                       public fit::MonitoringMesgListener,
+                       public fit::DeviceInfoMesgListener,
+                       public fit::MesgListener,
+                       public fit::DeveloperFieldDescriptionListener,
+                       public fit::RecordMesgListener {
 public:
-    static void PrintValue(const fit::FieldBase& field) {
-    }
+    static void PrintValue(const fit::FieldBase& field) { }
 
     static void PrintValues(const fit::FieldBase& field) {
         for(FIT_UINT8 j = 0; j < (FIT_UINT8)field.GetNumValues(); j++) {
@@ -172,32 +178,40 @@ public:
             case FIT_BASE_TYPE_UINT32Z: // ts << field.GetUINT32ZValue(j); break;
             case FIT_BASE_TYPE_UINT64Z: // ts << field.GetUINT64ZValue(j); break;
             case FIT_BASE_TYPE_FLOAT32: // ts << field.GetFLOAT32Value(j); break;
-            case FIT_BASE_TYPE_FLOAT64: ts << field.GetFLOAT64Value(j); break;
-            case FIT_BASE_TYPE_STRING: ts << field.GetSTRINGValue(j); break;
-            default: break;
+            case FIT_BASE_TYPE_FLOAT64:
+                ts << field.GetFLOAT64Value(j);
+                break;
+            case FIT_BASE_TYPE_STRING:
+                ts << field.GetSTRINGValue(j).c_str();
+                break;
+            default:
+                break;
             }
             ts << " " << field.GetUnits().c_str() << "\n";
         }
     }
 
     void OnMesg(fit::Mesg& mesg) override {
-        printf_("On Mesg:\n");
-        ts << "   New Mesg: " << mesg.GetName().c_str() << ".  It has " << mesg.GetNumFields() << " field(s) and " << mesg.GetNumDevFields() << " developer field(s).\n";
+        printf_("%s", "On Mesg:\n");
+        ts << "   New Mesg: " << mesg.GetName().c_str() << ".  It has " << mesg.GetNumFields()
+           << " field(s) and " << mesg.GetNumDevFields() << " developer field(s).\n";
 
         for(FIT_UINT16 i = 0; i < (FIT_UINT16)mesg.GetNumFields(); i++) {
             fit::Field* field = mesg.GetFieldByIndex(i);
-            ts << "   Field" << i << " (" << field->GetName().c_str() << ") has " << field->GetNumValues() << " value(s)\n";
+            ts << "   Field" << i << " (" << field->GetName().c_str() << ") has "
+               << field->GetNumValues() << " value(s)\n";
             PrintValues(*field);
         }
 
         for(auto devField: mesg.GetDeveloperFields()) {
-            ts << "   Developer Field(" << devField.GetName().c_str() << ") has " << devField.GetNumValues() << " value(s)\n";
+            ts << "   Developer Field(" << devField.GetName().c_str() << ") has "
+               << devField.GetNumValues() << " value(s)\n";
             PrintValues(devField);
         }
     }
 
     void OnMesg(fit::FileIdMesg& mesg) override {
-        printf_("File ID:\n");
+        printf_("%s", "File ID:\n");
         if(mesg.IsTypeValid())
             printf_("   Type: %d\n", mesg.GetType());
         if(mesg.IsManufacturerValid())
@@ -211,13 +225,13 @@ public:
     }
 
     void OnMesg(fit::UserProfileMesg& mesg) override {
-        printf_("User profile:\n");
+        printf_("%s", "User profile:\n");
         if(mesg.IsFriendlyNameValid())
             ts << "   Friendly Name: " << mesg.GetFriendlyName().c_str() << "\n";
         if(mesg.GetGender() == FIT_GENDER_MALE)
-            printf_("   Gender: Male\n");
+            printf_("%s", "   Gender: Male\n");
         if(mesg.GetGender() == FIT_GENDER_FEMALE)
-            printf_("   Gender: Female\n");
+            printf_("%s", "   Gender: Female\n");
         if(mesg.IsAgeValid())
             printf_("   Age [years]: %d\n", mesg.GetAge());
         if(mesg.IsWeightValid())
@@ -225,22 +239,35 @@ public:
     }
 
     void OnMesg(fit::DeviceInfoMesg& mesg) override {
-        printf_("Device info:\n");
+        printf_("%s", "Device info:\n");
 
-        if(mesg.IsTimestampValid()) printf_("   Timestamp: %d\n", mesg.GetTimestamp());
+        if(mesg.IsTimestampValid())
+            printf_("   Timestamp: %d\n", mesg.GetTimestamp());
 
         switch(mesg.GetBatteryStatus()) {
-        case FIT_BATTERY_STATUS_CRITICAL: printf_("   Battery status: Critical\n"); return;
-        case FIT_BATTERY_STATUS_GOOD: printf_("   Battery status: Good\n"); return;
-        case FIT_BATTERY_STATUS_LOW: printf_("   Battery status: Low\n"); return;
-        case FIT_BATTERY_STATUS_NEW: printf_("   Battery status: New\n"); return;
-        case FIT_BATTERY_STATUS_OK: printf_("   Battery status: OK\n"); return;
-        default: printf_("   Battery status: Invalid\n"); return;
+        case FIT_BATTERY_STATUS_CRITICAL:
+            printf_("%s", "   Battery status: Critical\n");
+            return;
+        case FIT_BATTERY_STATUS_GOOD:
+            printf_("%s", "   Battery status: Good\n");
+            return;
+        case FIT_BATTERY_STATUS_LOW:
+            printf_("%s", "   Battery status: Low\n");
+            return;
+        case FIT_BATTERY_STATUS_NEW:
+            printf_("%s", "   Battery status: New\n");
+            return;
+        case FIT_BATTERY_STATUS_OK:
+            printf_("%s", "   Battery status: OK\n");
+            return;
+        default:
+            printf_("%s", "   Battery status: Invalid\n");
+            return;
         }
     }
 
     void OnMesg(fit::MonitoringMesg& mesg) override {
-        printf_("Monitoring:\n");
+        printf_("%s", "Monitoring:\n");
 
         if(mesg.IsTimestampValid())
             printf_("   Timestamp: %d\n", mesg.GetTimestamp());
@@ -252,14 +279,17 @@ public:
         {
         case FIT_ACTIVITY_TYPE_WALKING:
         case FIT_ACTIVITY_TYPE_RUNNING: // Intentional fallthrough
-            if(mesg.IsStepsValid()) printf_("   Steps: %d\n", mesg.GetSteps());
+            if(mesg.IsStepsValid())
+                printf_("   Steps: %d\n", mesg.GetSteps());
             return;
         case FIT_ACTIVITY_TYPE_CYCLING:
         case FIT_ACTIVITY_TYPE_SWIMMING: // Intentional fallthrough
-            if(mesg.IsStrokesValid()) printf_("Strokes: %f\n", mesg.GetStrokes());
+            if(mesg.IsStrokesValid())
+                printf_("Strokes: %f\n", mesg.GetStrokes());
             return;
         default:
-            if(mesg.IsCyclesValid()) printf_("Cycles: %f\n", mesg.GetCycles());
+            if(mesg.IsCyclesValid())
+                printf_("Cycles: %f\n", mesg.GetCycles());
             return;
         }
     }
@@ -277,10 +307,10 @@ public:
 
             if(FIT_NULL != dynamic_cast<const fit::Field*>(field)) {
                 // Native Field
-                printf_("      native: ");
+                printf_("%s", "      native: ");
             } else {
                 // Developer Field
-                printf_("      override: ");
+                printf_("%s", "      override: ");
             }
 #if 0
             switch(field->GetType()) {
@@ -328,22 +358,23 @@ public:
                 printf_("%f %s\n",
                     field->GetFLOAT64Value() /*/ profileField->scale*/,
                     profileField->units.c_str());
-                Records.back().setField(
-                    profileField->name,
+                Records.back().setField(profileField->name,
                     field->GetFLOAT64Value() /*/ profileField->scale*/);
                 break;
             case FIT_BASE_TYPE_STRING:
                 printf_("%ls\n", field->GetSTRINGValue().c_str());
                 break;
-            default: break;
+            default:
+                break;
             }
 #endif
         }
     }
 
     void OnMesg(fit::RecordMesg& record) override {
-        printf_("Record:\n");
-        if(Records.empty()) Records.reserve(10000000);
+        printf_("%s", "Record:\n");
+        if(Records.empty())
+            Records.reserve(10000000);
         // if(Records.size() > 100) return;
         Records.emplace_back(Record{});
 
@@ -367,18 +398,101 @@ public:
     }
 
     void OnDeveloperFieldDescription(const fit::DeveloperFieldDescription& desc) override {
-        printf_("New Developer Field Description\n");
+        printf_("%s", "New Developer Field Description\n");
         printf_("   App Version: %d\n", desc.GetApplicationVersion());
         printf_("   Field Number: %d\n", desc.GetFieldDefinitionNumber());
     }
 };
 
 Fit::Fit(QObject* parent)
-    : QObject{parent} {
+    : QObject{parent} { }
+
+static QString getRealPathFromUri(const QUrl& url) {
+    QString path = "";
+
+    QFileInfo info = QFileInfo(url.toString());
+    if(info.isFile()) {
+        QString abs = QFileInfo(url.toString()).absoluteFilePath();
+        if(!abs.isEmpty() && abs != url.toString() && QFileInfo(abs).isFile()) {
+            return abs;
+        }
+    } else if(info.isDir()) {
+        QString abs = QFileInfo(url.toString()).absolutePath();
+        if(!abs.isEmpty() && abs != url.toString() && QFileInfo(abs).isDir()) {
+            return abs;
+        }
+    }
+    QString localfile = url.toLocalFile();
+    if((QFileInfo(localfile).isFile() || QFileInfo(localfile).isDir()) && localfile != url.toString()) {
+        return localfile;
+    }
+#ifdef Q_OS_ANDROID
+    QJniObject jUrl = QJniObject::fromString(url.toString());
+    QJniObject jContext = QtAndroidPrivate::context();
+    QJniObject jContentResolver = jContext.callObjectMethod("getContentResolver", "()Landroid/content/ContentResolver;");
+    QJniObject jUri = QJniObject::callStaticObjectMethod("android/net/Uri", "parse", "(Ljava/lang/String;)Landroid/net/Uri;", jUrl.object<jstring>());
+    QJniObject jCursor = jContentResolver.callObjectMethod("query", "(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;", jUri.object<jobject>(), nullptr, nullptr, nullptr, nullptr);
+    QJniObject jScheme = jUri.callObjectMethod("getScheme", "()Ljava/lang/String;");
+    QJniObject authority;
+    if(jScheme.isValid()) {
+        authority = jUri.callObjectMethod("getAuthority", "()Ljava/lang/String;");
+    }
+    if(authority.isValid() && authority.toString() == "com.android.externalstorage.documents") {
+        QJniObject jPath = jUri.callObjectMethod("getPath", "()Ljava/lang/String;");
+        path = jPath.toString();
+    } else if(jCursor.isValid() && jCursor.callMethod<jboolean>("moveToFirst")) {
+        QJniObject jColumnIndex = QJniObject::fromString("_data");
+        jint columnIndex = jCursor.callMethod<jint>("getColumnIndexOrThrow", "(Ljava/lang/String;)I", jColumnIndex.object<jstring>());
+        QJniObject jRealPath = jCursor.callObjectMethod("getString", "(I)Ljava/lang/String;", columnIndex);
+        path = jRealPath.toString();
+        if(authority.isValid() && authority.toString().startsWith("com.android.providers") && !url.toString().startsWith("content://media/external/")) {
+            QStringList list = path.split(":");
+            if(list.count() == 2) {
+                QString type = list.at(0);
+                QString id = list.at(1);
+                if(type == "image")
+                    type = type + "s";
+                if(type == "document" || type == "documents")
+                    type = "file";
+                if(type == "msf")
+                    type = "downloads";
+                if(QList<QString>({"images", "video", "audio"}).contains(type))
+                    type = type + "/media";
+                path = "content://media/external/" + type;
+                path = path + "/" + id;
+                return getRealPathFromUri(path);
+            }
+        }
+    } else {
+        QJniObject jPath = jUri.callObjectMethod("getPath", "()Ljava/lang/String;");
+        path = jPath.toString();
+        qDebug() << QFile::exists(path) << path;
+    }
+
+    if(path.startsWith("primary:")) {
+        path = path.remove(0, QString("primary:").length());
+        path = "/sdcard/" + path;
+    } else if(path.startsWith("/document/primary:")) {
+        path = path.remove(0, QString("/document/primary:").length());
+        path = "/sdcard/" + path;
+    } else if(path.startsWith("/tree/primary:")) {
+        path = path.remove(0, QString("/tree/primary:").length());
+        path = "/sdcard/" + path;
+    } else if(path.startsWith("/storage/emulated/0/")) {
+        path = path.remove(0, QString("/storage/emulated/0/").length());
+        path = "/sdcard/" + path;
+    } else if(path.startsWith("/tree//")) {
+        path = path.remove(0, QString("/tree//").length());
+        path = "/" + path;
+    }
+    if(!QFileInfo(path).isFile() && !QFileInfo(path).isDir() && !path.startsWith("/data"))
+        return url.toString();
+    return path;
+#else
+    return url.toString();
+#endif
 }
-
 bool Fit::loadFile(const QString& filePath) {
-
     QElapsedTimer timer;
     timer.start();
 
@@ -390,14 +504,68 @@ bool Fit::loadFile(const QString& filePath) {
     std::fstream file;
 
     qInfo("FIT Decode Example Application\n");
+    qInfo() << filePath;
+#ifdef Q_OS_ANDROID
+    // auto argv = '/' + filePath.split("%3A%2F").back().replace("%2F", "/").toStdString();
+    // qInfo() << QDir{}.exists(filePath);
+    // qInfo() << QDir{}.exists(argv.c_str());
 
+    // QFileInfo fi{filePath};
+
+    // qCritical() << "absoluteFilePath" << fi.absoluteFilePath();
+    // qCritical() << "absolutePath" << fi.absolutePath();
+    // qCritical() << "baseName" << fi.baseName();
+    // qCritical() << "bundleName" << fi.bundleName();
+    // qCritical() << "canonicalFilePath" << fi.canonicalFilePath();
+    // qCritical() << "canonicalPath" << fi.canonicalPath();
+    // qCritical() << "completeBaseName" << fi.completeBaseName();
+    // qCritical() << "completeSuffix" << fi.completeSuffix();
+    // qCritical() << "fileName" << fi.fileName();
+    // qCritical() << "filePath" << fi.filePath();
+    // qCritical() << "group" << fi.group();
+    // qCritical() << "junctionTarget" << fi.junctionTarget();
+    // qCritical() << "owner" << fi.owner();
+    // qCritical() << "path" << fi.path();
+    // qCritical() << "readSymLink" << fi.readSymLink();
+    // qCritical() << "suffix" << fi.suffix();
+    // qCritical() << "symLinkTarget" << fi.symLinkTarget();
+
+    // qCritical() << "symLinkTarget" << fi.dir();
+    // qCritical() << "symLinkTarget" << fi.absoluteDir();
+
+    // qCritical() << "filesystemAbsoluteFilePath" << fi.filesystemAbsoluteFilePath().c_str();
+    // qCritical() << "filesystemAbsolutePath" << fi.filesystemAbsolutePath().c_str();
+    // qCritical() << "filesystemCanonicalFilePath" << fi.filesystemCanonicalFilePath().c_str();
+    // qCritical() << "filesystemCanonicalPath" << fi.filesystemCanonicalPath().c_str();
+    // qCritical() << "filesystemFilePath" << fi.filesystemFilePath().c_str();
+    // qCritical() << "filesystemJunctionTarget" << fi.filesystemJunctionTarget().c_str();
+    // qCritical() << "filesystemPath" << fi.filesystemPath().c_str();
+    // qCritical() << "filesystemReadSymLink" << fi.filesystemReadSymLink().c_str();
+    // qCritical() << "filesystemSymLinkTarget" << fi.filesystemSymLinkTarget().c_str();
+
+    QJniObject uri = QJniObject::callStaticObjectMethod(
+        "android/net/Uri", "parse", "(Ljava/lang/String;)Landroid/net/Uri;",
+        QJniObject::fromString(filePath).object<jstring>());
+
+    QString filename = QJniObject::callStaticObjectMethod(
+        "br/com/myjavapackage/PathUtil", "getFileName",
+        "(Landroid/net/Uri;Landroid/content/Context;)Ljava/lang/String;",
+        uri.object() /*, QtAndroid::androidContext().object()*/)
+                           .toString();
+
+    qWarning() << filename;
+
+    auto argv = QFileInfo(filePath).fileName().toStdString();
+#else
     auto argv = filePath.toStdString();
-
+#endif
     file.open(argv, std::ios::in | std::ios::binary);
 
     if(!file.is_open()) {
         qWarning("Error opening file %s\n", argv.c_str());
-        return -1;
+        int error = errno;
+        const char* errorMessage = strerror(error);
+        qWarning() << "Error opening file: " << errorMessage;
     }
 
     if(!decode.CheckIntegrity(file))
