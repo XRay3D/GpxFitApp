@@ -1,5 +1,4 @@
 #include "fit.h"
-#include "private/qjnihelpers_p.h"
 
 #include <QAbstractTableModel>
 #include <QDebug>

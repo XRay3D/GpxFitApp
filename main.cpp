@@ -1,3 +1,6 @@
+#include "bt/connectionhandler.h"
+#include "bt/devicefinder.h"
+#include "bt/devicehandler.h"
 #include "fit.h"
 #include <QApplication>
 #include <QFileDialog>
@@ -10,6 +13,7 @@
 #include <QtCore/private/qandroidextras_p.h>
 #endif
 #include <set>
+using namespace Qt::StringLiterals;
 
 auto messageHandler = qInstallMessageHandler(nullptr);
 void myMessageHandler(QtMsgType type, const QMessageLogContext& context, const QString& message) {
@@ -68,7 +72,7 @@ void /*ApplicationUI::*/ accessAllFiles() {
         return;
     }
 // Here you have to set your PackageName
-#define PACKAGE_NAME "package:org.ekkescorner.examples.sharex"
+#define PACKAGE_NAME "package:org.xrsoft.fitapp"
     jboolean value = QJniObject::callStaticMethod<jboolean>("android/os/Environment", "isExternalStorageManager");
     if(value == false) {
         qDebug() << "requesting ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION";
@@ -106,6 +110,22 @@ int main(int argc, char* argv[]) {
 
     QApplication /*QGuiApplication*/ app(argc, argv);
 
+    QCommandLineParser parser;
+    parser.setApplicationDescription(u"Bluetooth Low Energy Heart Rate Game"_s);
+    parser.addHelpOption();
+    parser.addVersionOption();
+
+    QCommandLineOption verboseOption(u"verbose"_s, u"Verbose mode"_s);
+    parser.addOption(verboseOption);
+    parser.process(app);
+
+    if(parser.isSet(verboseOption))
+        QLoggingCategory::setFilterRules(u"qt.bluetooth* = true"_s);
+
+    ConnectionHandler connectionHandler;
+    DeviceHandler deviceHandler;
+    DeviceFinder deviceFinder(&deviceHandler);
+
     QQmlApplicationEngine engine;
 
     // qmlRegisterType<Fit>("org.example", 1, 0, "Fit");
@@ -122,6 +142,11 @@ int main(int argc, char* argv[]) {
     // fit.loadFile("/home/x-ray/Загрузки/bt/3 download auto/MAGENE_C206Pro_2024-04-22-19-30-21_50229574_1713806912220.fit");
     // fit.loadFile("C:/Users/bakiev/Downloads/Telegram "
     //              "Desktop/MAGENE_C206Pro_2023-08-05-09-57-40_50229574_1691267580997.fit");
+    engine.setInitialProperties({
+        {u"connectionHandler"_s, QVariant::fromValue(&connectionHandler)},
+        {     u"deviceFinder"_s,      QVariant::fromValue(&deviceFinder)},
+        {    u"deviceHandler"_s,     QVariant::fromValue(&deviceHandler)}
+    });
 
     QObject::connect(
         &engine,
@@ -130,16 +155,16 @@ int main(int argc, char* argv[]) {
         [] { QCoreApplication::exit(-1); },
         Qt::QueuedConnection);
 
-    QObject::connect(
-        &engine,
-        &QQmlApplicationEngine::objectCreated,
-        &app,
-        [&engine] {
-            Fit* fit = engine.singletonInstance<Fit*>("FitApp", "fit");
-            if(fit)
-                fit->setText("77");
-        },
-        Qt::QueuedConnection);
+    // QObject::connect(
+    //     &engine,
+    //     &QQmlApplicationEngine::objectCreated,
+    //     &app,
+    //     [&engine] {
+    //         Fit* fit = engine.singletonInstance<Fit*>("FitApp", "fit");
+    //         if(fit)
+    //             fit->setText("77");
+    //     },
+    //     Qt::QueuedConnection);
 
     engine.loadFromModule("FitApp", "Main");
     // fit.setText("77");
