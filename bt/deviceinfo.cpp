@@ -14,7 +14,12 @@ DeviceInfo::DeviceInfo(const QBluetoothDeviceInfo& info)
 
 QBluetoothDeviceInfo DeviceInfo::getDevice() const { return device_; }
 
-QString DeviceInfo::getName() const { return device_.name(); }
+QString DeviceInfo::getName() const {
+    auto data = device_.manufacturerData();
+    for(auto&& key: data.uniqueKeys())
+        qCritical() << device_.name() << key << data.values(key);
+    return device_.name();
+}
 
 QString DeviceInfo::getAddress() const {
 #ifdef Q_OS_DARWIN

@@ -7,14 +7,94 @@
 #include <QtCore/qendian.h>
 #include <QtCore/qrandom.h>
 
+#include <QApplication>
+#include <QDir>
+
 // 8ce5cc030a4d11e9ab14d663bd873d93
 //                               "{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}"
 const QBluetoothUuid FileService{"{8ce5cc01-0a4d-11e9-ab14-d663bd873d93}"};
 const QBluetoothUuid FileControlChar{"{8ce5cc02-0a4d-11e9-ab14-d663bd873d93}"};
 const QBluetoothUuid FileReceiveChar{"{8ce5cc03-0a4d-11e9-ab14-d663bd873d93}"};
 
+enum Cmd : uint16_t {
+    GetFits = 0x4940,
+    GetFit = 0x4A40,
+};
+
+struct [[gnu::packed]] ReqFits {
+    const Cmd cmd{GetFits};
+    uint32_t date{};
+    explicit ReqFits(const QDateTime& date)
+        : date{static_cast<uint32_t>(date.toSecsSinceEpoch())} { }
+    operator QByteArray() const {
+        QByteArray ret{sizeof(ReqFits), '\0'};
+        memcpy(ret.data(), this, sizeof(ReqFits));
+        return ret;
+    }
+};
+
+struct [[gnu::packed]] RcievedFits {
+    Cmd cmd{GetFits};
+    uint8_t _{};
+    uint8_t count{};
+    uint8_t hasMore{};
+    QList<QDateTime> fits;
+    enum {
+        Size = 5
+    };
+    explicit RcievedFits(const QByteArray& data) {
+        memcpy(this, data.data(), Size);
+        fits.reserve(count);
+        const char* ptr = data.data() + Size;
+        qDebug() << count << hasMore << Size;
+        for(uint16_t i{}; i < count; ++i) {
+            uint32_t date{};
+            memcpy(&date, ptr, sizeof(date));
+            ptr += 4;
+            fits << QDateTime::fromSecsSinceEpoch(date);
+            qDebug() << i << fits.back();
+        }
+    }
+    operator QList<QDateTime>() const { return fits; }
+};
+
+struct [[gnu::packed]] ReqFit {
+    const Cmd cmd{GetFit};
+    uint32_t date{};
+    explicit ReqFit(const QDateTime& date)
+        : date{static_cast<uint32_t>(date.toSecsSinceEpoch())} { }
+    operator QByteArray() const {
+        QByteArray ret{sizeof(ReqFit), '\0'};
+        memcpy(ret.data(), this, sizeof(ReqFit));
+        return ret;
+    }
+};
+
+struct [[gnu::packed]] RcieveFit {
+    uint32_t date{};
+    uint32_t dataLeft{};
+    uint16_t kuskov{};
+    uint16_t kusok{};
+    uint8_t dataSize{};
+    QByteArray data;
+    enum {
+        Size = 13
+    };
+    explicit RcieveFit(const QByteArray& data)
+        : data{data.mid(Size)} {
+        memcpy(this, data.data(), Size);
+    }
+};
+
 DeviceHandler::DeviceHandler(QObject* parent)
-    : BluetoothBaseClass(parent) {
+    : BluetoothBaseClass{parent} {
+
+    if(QDir dir{QApplication::applicationDirPath()}; dir.exists()) {                                       // Поиск всех файлов в папке "plugins"
+        for(auto listFiles = dir.entryList(QStringList("*.fit"), QDir::Files); const auto& str: listFiles) // Проход по всем файлам
+            fitFiles_.push_back(QDateTime::fromString(str.mid(0, str.size() - 4), "dd.MM.yyyy hh:mm:ss"));
+        std::ranges::sort(fitFiles_);
+        qWarning() << fitFiles_;
+    }
 }
 
 void DeviceHandler::setAddressType(AddressType type) {
@@ -79,17 +159,17 @@ void DeviceHandler::setDevice(DeviceInfo* device) {
     }
 }
 
-void DeviceHandler::startMeasurement() {
-    if(alive()) {
-        runing_ = true;
-        emit runingChanged();
-    }
-}
+// void DeviceHandler::startMeasurement() {
+//     if(alive()) {
+//         runing_ = true;
+//         emit runingChanged();
+//     }
+// }
 
-void DeviceHandler::stopMeasurement() {
-    runing_ = false;
-    emit runingChanged();
-}
+// void DeviceHandler::stopMeasurement() {
+//     runing_ = false;
+//     emit runingChanged();
+// }
 
 //! [Filter HeartRate service 1]
 void DeviceHandler::serviceDiscovered(const QBluetoothUuid& gatt) {
@@ -202,6 +282,38 @@ void DeviceHandler::serviceStateChanged(QLowEnergyService::ServiceState s) {
 //! [Reading value]
 void DeviceHandler::updateCharacteristicValue(const QLowEnergyCharacteristic& c, const QByteArray& value) {
     qDebug() << sender() << c.uuid() << value.toHex().toUpper();
+    if(FileControlChar == c.uuid()) {
+        if(value.size() < 2) return;
+        Cmd cmd{};
+        memcpy(&cmd, value.data(), sizeof(Cmd));
+        switch(cmd) {
+        case GetFits: {
+            RcievedFits fits{value};
+            if(fits.count) {
+                fits_.append(fits);
+                fitsChanged();
+            }
+            if((runing_ = fits.hasMore))
+                write(ReqFits{fits_.back()});
+        } break;
+        case GetFit: {
+            if(value.size() == 3 && value.back() == 0) {
+                file.open(QFile::WriteOnly);
+            }
+        } break;
+        default: break;
+        }
+    } else if(FileReceiveChar == c.uuid()) {
+        RcieveFit fit{value};
+        file.write(fit.data);
+        setKuskov(fit.kuskov);
+        setKusok(fit.kusok);
+        if(fit.dataLeft == 0 && fit.kuskov == fit.kusok) {
+            fitFiles_.push_back(QDateTime::fromSecsSinceEpoch(fit.date));
+            file.close();
+            loop.exit();
+        }
+    }
 #if 0
     // ignore any other characteristic change -> shouldn't really happen though
     if(c.uuid() != QBluetoothUuid(QBluetoothUuid::CharacteristicType::HeartRateMeasurement))
@@ -250,6 +362,21 @@ void DeviceHandler::disconnectService() {
     service_ = nullptr;
 }
 
+void DeviceHandler::getFitsAfterDate(const QDateTime& date) {
+    if(runing_) return;
+    fits_.clear();
+    fitsChanged();
+    write(ReqFits{date});
+}
+
+void DeviceHandler::getLast() {
+    if(runing_) return;
+    auto date = fitFiles_.last().addSecs(1);
+    fits_.clear();
+    fitsChanged();
+    write(ReqFits{date});
+}
+
 bool DeviceHandler::runing() const { return runing_; }
 
 bool DeviceHandler::alive() const {
@@ -259,8 +386,18 @@ bool DeviceHandler::alive() const {
     return false;
 }
 
-bool DeviceHandler::write(const QByteArray& hex) {
+bool DeviceHandler::write(const QByteArray& data) {
     if(!alive() /*|| !notificationDescControl_.isValid()*/) return false;
-    service_->writeCharacteristic(characteristicControl_, QByteArray::fromHex(hex));
-    return true;
+    service_->writeCharacteristic(characteristicControl_, data);
+    return runing_ = true;
+}
+
+void DeviceHandler::downloadAllFits() {
+    for(int i{}; auto&& fit: fits_) {
+        setCurrentFile(++i);
+        file.setFileName(fit.toString("dd.MM.yyyy hh:mm:ss") + ".fit");
+        write(ReqFit{fit});
+        loop.exec();
+    }
+    setCurrentFile(0);
 }

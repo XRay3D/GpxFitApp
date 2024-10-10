@@ -1,17 +1,18 @@
 #include "bt/connectionhandler.h"
 #include "bt/devicefinder.h"
 #include "bt/devicehandler.h"
-#include "fit.h"
 #include <QApplication>
 #include <QFileDialog>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 // #include <QAndroidJniObject>
+#include <QLoggingCategory>
 #include <QQmlContext>
 #ifdef Q_OS_ANDROID
 #include <QCoreApplication>
 #include <QtCore/private/qandroidextras_p.h>
 #endif
+#include <QCommandLineParser>
 #include <set>
 using namespace Qt::StringLiterals;
 
@@ -136,9 +137,9 @@ int main(int argc, char* argv[]) {
     // qCritical() << "checkPermission" << checkPermission();
     // accessAllFiles();
 
-    Fit fit;
-    engine.rootContext()->setContextProperty("fit", &fit);
-    fit.loadFile(QFileDialog::getOpenFileName(nullptr, "Open File" /*, "/home", "Fit (*.fit)"*/));
+    // Fit fit;
+    // engine.rootContext()->setContextProperty("fit", &fit);
+    // fit.loadFile(QFileDialog::getOpenFileName(nullptr, "Open File" /*, "/home", "Fit (*.fit)"*/));
     // fit.loadFile("/home/x-ray/Загрузки/bt/3 download auto/MAGENE_C206Pro_2024-04-22-19-30-21_50229574_1713806912220.fit");
     // fit.loadFile("C:/Users/bakiev/Downloads/Telegram "
     //              "Desktop/MAGENE_C206Pro_2023-08-05-09-57-40_50229574_1691267580997.fit");
